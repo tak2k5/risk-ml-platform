@@ -1,0 +1,11 @@
+# Một Prometheus cho cả hai mô hình. Số đo drift dùng chung tên (risk_*), phân biệt bằng nhãn model.
+global:
+  scrape_interval: 5s
+scrape_configs:
+  - job_name: credit
+    metrics_path: /metrics/
+    static_configs:
+      - targets: ["credit-api:8000"]
+  - job_name: fraud
+    static_configs:
+      - targets: ["fraud-consumer:8001"]

@@ -1,0 +1,18 @@
+# Image được build từ thư mục gốc (credit/Dockerfile, fraud/Dockerfile đều cần riskops/): chỉ gửi phần cần thiết
+.git
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/data
+**/notebooks
+**/tests
+**/reports
+**/docs
+credit/deploy
+credit/models/candidates
+**/mlflow.db
+**/mlartifacts
+**/mlruns
+**/mlflow-data
+monitoring

@@ -1,0 +1,26 @@
+# Mỗi tuần: giả lập 12 tháng drift + retrain cho mô hình tín dụng, lưu báo cáo làm artifact.
+# Khi có dữ liệu thật đổ về, thay bằng python -m pipelines.monitor --current <file> và pipelines.flow --labeled <file>
+name: monitor-retrain
+on:
+  schedule:
+    - cron: "0 2 * * 1"   # 2h sáng thứ Hai (UTC)
+  workflow_dispatch:
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: credit } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r requirements.txt matplotlib
+      - name: Giả lập 12 tháng drift + retrain
+        run: PYTHONPATH=src:../riskops/src python -m pipelines.simulate --months 12
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drift-simulation
+          path: |
+            credit/reports/sim/simulation.md
+            credit/reports/sim/simulation.png
+            credit/reports/sim/simulation.csv

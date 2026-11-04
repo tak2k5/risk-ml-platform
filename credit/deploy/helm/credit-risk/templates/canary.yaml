@@ -1,0 +1,64 @@
+{{- if .Values.canary.enabled }}
+{{- $name := printf "%s-canary" (include "credit-risk.name" .) }}
+{{- $tag := required "canary.image.tag là bắt buộc khi bật canary" .Values.canary.image.tag }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "credit-risk.labels" . | nindent 4 }}
+    track: canary
+spec:
+  replicas: {{ .Values.canary.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      track: canary
+  template:
+    metadata:
+      labels:
+        {{- include "credit-risk.labels" . | nindent 8 }}
+        track: canary
+    spec:
+      {{- include "credit-risk.podSpec" (dict "root" . "image" (printf "%s:%s" .Values.image.repository $tag)) | nindent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "credit-risk.labels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    track: canary
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+---
+# ingress-nginx đọc các annotation này và chia {{ .Values.canary.weight }}% lưu lượng sang canary
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "credit-risk.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "{{ .Values.canary.weight }}"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - {{- with .Values.ingress.host }}
+      host: {{ . }}
+      {{- end }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port: { number: {{ .Values.service.port }} }
+{{- end }}

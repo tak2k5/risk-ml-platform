@@ -1,0 +1,18 @@
+# Chạy API + MLflow UI trên laptop:  docker compose up --build
+# Trước đó cần có models/model.joblib (make train-synthetic hoặc make train)
+services:
+  api:
+    build: { context: .., dockerfile: credit/Dockerfile }   # cần cả ../riskops
+    ports: ["8000:8000"]
+    environment:
+      MODEL_DIR: /app/models
+    volumes:
+      - ./models:/app/models:ro   # đổi mô hình không cần build lại image
+    restart: unless-stopped
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.16.2
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:///mlflow/mlflow.db --artifacts-destination /mlflow/artifacts
+    ports: ["5000:5000"]
+    volumes:
+      - ./mlflow-data:/mlflow

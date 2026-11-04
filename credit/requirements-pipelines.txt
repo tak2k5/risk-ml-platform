@@ -1,0 +1,7 @@
+# Dự án #25: giám sát drift và retrain tự động
+-r requirements.txt
+prefect>=3.0
+evidently>=0.7
+matplotlib>=3.8
+# Evidently 0.7 chưa chạy được với pandas 3 (đã thử: lỗi import infer_dtype_from_object)
+pandas>=2.2,<3

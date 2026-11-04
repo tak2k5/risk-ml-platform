@@ -1,0 +1,6 @@
+apiVersion: v2
+name: credit-risk
+description: API chấm điểm rủi ro tín dụng (FastAPI + LightGBM) với HPA và canary
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

@@ -1,0 +1,110 @@
+# Cả nền tảng trên một máy: API tín dụng, luồng gian lận, MLflow dùng chung, Prometheus + Grafana chung.
+#
+#   make train-synthetic   (hoặc make train với dữ liệu thật) -> credit/models, fraud/models
+#   docker compose up -d --build
+#
+#   http://localhost:8000/docs  API tín dụng           http://localhost:5000  MLflow (cả hai mô hình)
+#   http://localhost:3000       Grafana (admin/admin)  http://localhost:9090  Prometheus
+#   localhost:19092             Kafka (Redpanda) cho producer giao dịch
+#
+# Mỗi thư mục con vẫn có docker-compose.yml riêng để chạy độc lập. Ở đây hai mô hình dùng chung:
+#   - MLflow: cả hai ghi lần train và đăng ký phiên bản (credit-risk, fraud-lgbm), alias champion/challenger;
+#     đặt CREDIT_MODEL_URI / FRAUD_MODEL_URI = models:/<tên>@champion để dịch vụ nạp thẳng từ registry
+#   - giám sát drift trên luồng (riskops.StreamDrift) và một dashboard Grafana cho cả hai
+
+x-mlflow-client: &mlflow-client
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+
+services:
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.1.0
+    command: >
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --artifacts-destination /mlflow/artifacts --serve-artifacts
+    ports: ["5000:5000"]
+    volumes: ["mlflow-data:/mlflow"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 5s
+      retries: 40
+
+  # ---------- Rủi ro tín dụng (credit/) ----------
+  credit-api:
+    build: { context: ., dockerfile: credit/Dockerfile }
+    image: risk-ml-platform/credit:local
+    ports: ["8000:8000"]
+    environment:
+      <<: *mlflow-client
+      MODEL_DIR: /app/models
+      MODEL_URI: ${CREDIT_MODEL_URI:-}            # vd models:/credit-risk@champion
+      DRIFT_WINDOW: ${CREDIT_DRIFT_WINDOW:-1000}
+      DRIFT_EVERY: ${CREDIT_DRIFT_EVERY:-200}
+    volumes: ["./credit/models:/app/models:ro"]
+    depends_on: { mlflow: { condition: service_healthy } }
+    restart: unless-stopped
+
+  # ---------- Gian lận trên luồng (fraud/) ----------
+  redpanda:
+    image: redpandadata/redpanda:v24.3.6
+    command:
+      - redpanda start --mode dev-container --smp 1 --memory 1G --overprovisioned
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+    ports: ["19092:19092"]
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      retries: 30
+
+  topics:
+    image: redpandadata/redpanda:v24.3.6
+    entrypoint: ["/bin/sh", "-c", "rpk topic create transactions alerts -p 1 -X brokers=redpanda:9092; rpk topic list -X brokers=redpanda:9092 | grep -q transactions"]
+    depends_on: { redpanda: { condition: service_healthy } }
+    restart: on-failure
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 30
+
+  fraud-consumer:
+    build: { context: ., dockerfile: fraud/Dockerfile }
+    image: risk-ml-platform/fraud:local
+    command: ["python", "-m", "fraudrt.consumer", "--brokers", "redpanda:9092", "--redis", "redis://redis:6379/0"]
+    env_file: [{ path: .env, required: false }]   # TELEGRAM_TOKEN, TELEGRAM_CHAT_ID nếu muốn cảnh báo Telegram
+    environment:
+      <<: *mlflow-client
+      MODEL_URI: ${FRAUD_MODEL_URI:-}             # vd models:/fraud-lgbm@champion
+      DRIFT_WINDOW: ${FRAUD_DRIFT_WINDOW:-2000}
+      DRIFT_EVERY: ${FRAUD_DRIFT_EVERY:-500}
+    volumes: ["./fraud/models:/app/models:ro", "./fraud/reports:/app/reports"]
+    ports: ["8001:8001"]
+    depends_on:
+      redis: { condition: service_healthy }
+      topics: { condition: service_completed_successfully }
+      mlflow: { condition: service_healthy }
+    restart: unless-stopped
+
+  # ---------- Giám sát chung ----------
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    volumes: ["./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/risk.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards/risk.json:/var/lib/grafana/dashboards/risk.json:ro
+      - ./fraud/monitoring/grafana/dashboards/fraud.json:/var/lib/grafana/dashboards/fraud.json:ro
+    ports: ["3000:3000"]
+
+volumes:
+  mlflow-data:

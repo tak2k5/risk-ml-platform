@@ -1,0 +1,28 @@
+# Dữ liệu Kaggle KHÔNG được đưa lên GitHub (điều khoản cuộc thi)
+data/*
+!data/README.md
+!data/.gitkeep
+
+# Sản phẩm sinh ra khi chạy
+models/*
+!models/.gitkeep
+mlruns/
+mlartifacts/
+reports/*.html
+reports/sim/*
+!reports/sim/simulation.md
+!reports/sim/simulation.png
+reports/synthetic/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.env
+*.egg-info/
+mlflow.db
+mlflow-data/
+reports/drift.md
+models/candidates/
+!reports/.gitkeep

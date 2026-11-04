@@ -1,0 +1,50 @@
+# Giá trị mặc định. Ghi đè khi cài: helm upgrade --install cr deploy/helm/credit-risk --set image.tag=v2
+
+image:
+  repository: credit-risk
+  tag: local
+  pullPolicy: IfNotPresent   # kind: image được nạp sẵn bằng "kind load docker-image"
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+service:
+  port: 80
+  targetPort: 8000
+
+# Tự co giãn theo CPU (cần metrics-server trong cụm)
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 60
+
+ingress:
+  enabled: true
+  className: nginx
+  host: ""            # để trống = mọi host (localhost trên kind)
+
+# Canary: chạy song song phiên bản mới, nhận một phần nhỏ lưu lượng qua ingress-nginx.
+# Bật:   --set canary.enabled=true --set canary.image.tag=v2 --set canary.weight=10
+# Tăng dần weight (10 -> 50 -> 100), theo dõi lỗi/độ trễ; ổn thì đưa tag mới vào image.tag và tắt canary.
+canary:
+  enabled: false
+  weight: 10          # phần trăm lưu lượng đi vào canary
+  replicaCount: 1
+  image:
+    tag: ""
+
+probes:
+  readiness:
+    path: /health
+    initialDelaySeconds: 10
+  liveness:
+    path: /health
+    initialDelaySeconds: 30

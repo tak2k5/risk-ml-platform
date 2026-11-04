@@ -1,0 +1,84 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: make install
+      - run: make lint
+      - name: Test từng phần + xuyên suốt (dữ liệu giả lập, MLflow sqlite)
+        run: make test
+
+  platform:
+    # Dựng cả nền tảng bằng docker compose, gửi hồ sơ vay và giao dịch, kiểm tra số đo; rồi đăng ký mô hình vào
+    # MLflow dùng chung và khởi động lại hai dịch vụ để nạp champion thẳng từ registry
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: make install
+      - run: make train-synthetic
+      - run: docker compose up -d --build
+      - run: make smoke
+      - run: make register ARGS=--synthetic
+      - name: Nạp champion từ MLflow
+        run: |
+          CREDIT_MODEL_URI=models:/credit-risk@champion FRAUD_MODEL_URI=models:/fraud-lgbm@champion docker compose up -d
+          make smoke
+      - if: always()
+        run: docker compose logs --tail 40 credit-api fraud-consumer mlflow; docker compose down -v
+
+  fraud-stream:
+    # Đo độ trễ và kiểm tra lệch đặc trưng offline/online trên luồng (stack riêng của fraud/)
+    runs-on: ubuntu-latest
+    needs: test
+    defaults: { run: { working-directory: fraud } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r requirements.txt
+      - run: make train-synthetic
+      - run: docker compose up -d --build
+      - run: N=3000 RATE=500 SYNTH=1 bash scripts/bench.sh
+      - if: always()
+        run: docker compose logs --tail 50 consumer; docker compose down -v
+
+  credit-k8s:
+    # Cụm kind ngay trong GitHub Actions: Helm chart, cài và gọi thử API tín dụng
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: pip install -r credit/requirements.txt
+      - run: cd credit && PYTHONPATH=src:../riskops/src python -m credit_risk.train --synthetic 5000 --no-mlflow
+      - uses: azure/setup-helm@v4
+      - name: Helm lint + render thử cả chế độ canary
+        run: |
+          helm lint credit/deploy/helm/credit-risk
+          helm template cr credit/deploy/helm/credit-risk --set canary.enabled=true --set canary.image.tag=v2 > /dev/null
+      - uses: helm/kind-action@v1
+        with:
+          config: credit/deploy/kind/kind-config.yaml
+          cluster_name: credit-risk
+      - name: Build, nạp image và cài chart
+        run: |
+          docker build -f credit/Dockerfile -t credit-risk:ci .
+          kind load docker-image credit-risk:ci --name credit-risk
+          helm upgrade --install cr credit/deploy/helm/credit-risk --set image.tag=ci \
+            --set ingress.enabled=false --set autoscaling.enabled=false --wait --timeout 5m
+      - name: Smoke test qua port-forward
+        run: |
+          kubectl port-forward svc/cr 8000:80 &
+          sleep 5
+          python credit/scripts/smoke_test.py http://localhost:8000

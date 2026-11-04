@@ -1,0 +1,17 @@
+# Cụm Kubernetes chạy trong Docker trên laptop (miễn phí): kind create cluster --config deploy/kind/kind-config.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: credit-risk
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:      # localhost:8080 -> Ingress trong cụm
+      - containerPort: 80
+        hostPort: 8080
+        protocol: TCP
+  - role: worker

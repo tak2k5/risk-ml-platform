@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "credit-risk.name" . }}
+  labels:
+    {{- include "credit-risk.labels" . | nindent 4 }}
+    track: stable
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }   # luôn đủ Pod phục vụ khi cập nhật
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      track: stable
+  template:
+    metadata:
+      labels:
+        {{- include "credit-risk.labels" . | nindent 8 }}
+        track: stable
+    spec:
+      {{- include "credit-risk.podSpec" (dict "root" . "image" (printf "%s:%s" .Values.image.repository .Values.image.tag)) | nindent 6 }}

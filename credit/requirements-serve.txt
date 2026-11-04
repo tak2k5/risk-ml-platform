@@ -1,0 +1,15 @@
+# Chỉ những gì API cần (image Docker nhỏ hơn). Phiên bản scikit-learn/LightGBM lúc phục vụ
+# nên trùng lúc train, vì file joblib phụ thuộc phiên bản (xem metadata.json -> versions).
+pandas>=2.2
+numpy>=1.26
+scipy>=1.11
+scikit-learn>=1.5
+lightgbm>=4.3
+shap>=0.45
+joblib>=1.3
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+prometheus-client>=0.20
+# Nạp mô hình từ MLflow dùng chung khi đặt MODEL_URI (riskops.registry.fetch)
+mlflow-skinny>=2.14

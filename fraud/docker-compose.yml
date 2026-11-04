@@ -1,0 +1,57 @@
+# Redpanda (tương thích Kafka, nhẹ) + Redis (đặc trưng cửa sổ) + consumer chấm điểm + Prometheus + Grafana.
+# Cần models/ (make train hoặc make train-synthetic) trước khi bật consumer.
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.3.6
+    command:
+      - redpanda start --mode dev-container --smp 1 --memory 1G --overprovisioned
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+    ports: ["19092:19092"]
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      retries: 30
+
+  topics:
+    # 1 partition: giữ đúng thứ tự thời gian giữa mọi tài khoản (xem README, phần giới hạn)
+    image: redpandadata/redpanda:v24.3.6
+    # chạy lại khi topic đã có thì vẫn thành công
+    entrypoint: ["/bin/sh", "-c", "rpk topic create transactions alerts -p 1 -X brokers=redpanda:9092; rpk topic list -X brokers=redpanda:9092 | grep -q transactions"]
+    depends_on:
+      redpanda: { condition: service_healthy }
+    restart: on-failure
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 30
+
+  consumer:
+    build: { context: .., dockerfile: fraud/Dockerfile }   # cần cả ../riskops
+    command: ["python", "-m", "fraudrt.consumer", "--brokers", "redpanda:9092", "--redis", "redis://redis:6379/0"]
+    env_file: [{ path: .env, required: false }]   # TELEGRAM_TOKEN, TELEGRAM_CHAT_ID nếu muốn cảnh báo Telegram
+    volumes: ["./models:/app/models:ro", "./reports:/app/reports"]
+    ports: ["8001:8001"]
+    depends_on:
+      redis: { condition: service_healthy }
+      topics: { condition: service_completed_successfully }
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    volumes: ["./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/fraud.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]

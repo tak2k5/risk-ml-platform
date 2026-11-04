@@ -1,0 +1,3 @@
+# Huấn luyện + phục vụ
+-r requirements-serve.txt
+optuna>=3.6
